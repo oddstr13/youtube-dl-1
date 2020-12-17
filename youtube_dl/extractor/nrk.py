@@ -793,23 +793,6 @@ class NRKPlaylistIE(NRKPlaylistBaseIE):
         return self._og_search_description(webpage)
 
 
-class NRKTVEpisodesIE(NRKPlaylistBaseIE):
-    _VALID_URL = r'https?://tv\.nrk\.no/program/[Ee]pisodes/[^/]+/(?P<id>\d+)'
-    _ITEM_RE = r'data-episode=["\']%s' % NRKTVIE._EPISODE_RE
-    _TESTS = [{
-        'url': 'https://tv.nrk.no/program/episodes/nytt-paa-nytt/69031',
-        'info_dict': {
-            'id': '69031',
-            'title': 'Nytt på nytt, sesong: 201210',
-        },
-        'playlist_count': 4,
-    }]
-
-    def _extract_title(self, webpage):
-        return self._html_search_regex(
-            r'<h1>([^<]+)</h1>', webpage, 'title', fatal=False)
-
-
 class NRKSkoleIE(InfoExtractor):
     IE_DESC = 'NRK Skole'
     _VALID_URL = r'https?://(?:www\.)?nrk\.no/skole/?\?.*\bmediaId=(?P<id>\d+)'
