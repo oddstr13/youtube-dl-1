@@ -2,6 +2,7 @@
 from __future__ import unicode_literals
 
 import itertools
+import json
 import random
 import re
 
@@ -11,7 +12,7 @@ from ..compat import (
     compat_urllib_parse_unquote,
 )
 from ..utils import (
-    determine_ext,
+    date_from_str, determine_ext,
     ExtractorError,
     int_or_none,
     parse_age_limit,
@@ -19,6 +20,7 @@ from ..utils import (
     try_get,
     urljoin,
     url_or_none,
+    js_to_json,
 )
 
 
@@ -169,7 +171,7 @@ class NRKIE(NRKBaseIE):
                 'height': int_or_none(image.get('pixelHeight')),
             })
 
-        return {
+        res = {
             'id': video_id,
             'title': title,
             'alt_title': alt_title,
@@ -178,6 +180,8 @@ class NRKIE(NRKBaseIE):
             'thumbnails': thumbnails,
             'formats': formats,
         }
+        print("NRKIE", res)
+        return res
 
     def _real_extract(self, url):
         video_id = self._match_id(url)
@@ -296,6 +300,7 @@ class NRKTVIE(NRKBaseIE):
     def _extract_from_mediaelement(self, video_id):
         api_hosts = (self._api_host, ) if self._api_host else self._API_HOSTS
 
+        data = {}
         for api_host in api_hosts:
             data = self._download_json(
                 'http://%s/mediaelement/%s' % (api_host, video_id),
@@ -456,16 +461,38 @@ class NRKTVEpisodeIE(InfoExtractor):
     _TESTS = [{
         'url': 'https://tv.nrk.no/serie/hellums-kro/sesong/1/episode/2',
         'info_dict': {
-            'id': 'MUHH36005220BA',
+            'id': 'MUHH36005220',
             'ext': 'mp4',
-            'title': 'Kro, krig og kjærlighet 2:6',
-            'description': 'md5:b32a7dc0b1ed27c8064f58b97bda4350',
-            'duration': 1563,
+            # 'title': 'Kro, krig og kjærlighet 2:6',
+            'title': 'Kro, krig og kjærlighet',
+            'description': 'md5:ad92ddffc04cea8ce14b415deef81787',
+            'duration': 1563.92,
             'series': 'Hellums kro',
             'season_number': 1,
             'episode_number': 2,
-            'episode': '2:6',
+            'episode': 'Kro, krig og kjærlighet',
             'age_limit': 6,
+            'upload_date': '20191101',
+            'timestamp': 1572584520,
+        },
+        'params': {
+            'skip_download': True,
+        },
+    }, {
+        'url': 'https://tv.nrk.no/serie/hellums-kro/sesong/1/episode/3',
+        'info_dict': {
+            'id': 'MUHH36005320',
+            'ext': 'mp4',
+            'title': 'Jo flere kokker desto mer søl',
+            'description': 'md5:17e73e559fda77d6d6b9a90539d0b2a6',
+            'duration': 1652.36,
+            'series': 'Hellums kro',
+            'season_number': 1,
+            'episode_number': 3,
+            'episode': 'Jo flere kokker desto mer søl',
+            'age_limit': 6,
+            'upload_date': '20191108',
+            'timestamp': 1573189200,
         },
         'params': {
             'skip_download': True,
@@ -489,12 +516,47 @@ class NRKTVEpisodeIE(InfoExtractor):
         'skip': 'ProgramRightsHasExpired',
     }]
 
+    def _clean_episode_title(self, title, episode):
+
+        if None not in (episode, title):
+            prefix = self._search_regex(r'^(\s*%d.\s*)' % episode, title, "episode_prefix", default=None)
+            if prefix is not None:
+                title = title[len(prefix):]
+
+            suffix = self._search_regex(r'(\s*%d:\d+\s*)$' % episode, title, "episode_prefix", default=None)
+            if suffix is not None:
+                title = title[:-len(suffix)]
+
+            return title
+
     def _real_extract(self, url):
         display_id = self._match_id(url)
 
+        url_season_number = int_or_none(self._search_regex(r'/sesong/(\d+)/episode/\d+', url, "season_number", fatal=False))
+        url_episode_number = int_or_none(self._search_regex(r'/sesong/\d+/episode/(\d+)', url, "episode_number", fatal=False))
+
         webpage = self._download_webpage(url, display_id)
 
-        info = self._search_json_ld(webpage, display_id, default={})
+        raw_initial_data = self._search_regex(r'<script>[\w\s\.]*INITIAL_DATA[\w\s]*=\s*({.*?});\s*</script>', webpage, "series_initial_data", fatal=False)
+        initial_data = self._parse_json(js_to_json(raw_initial_data), "series_initial_data", fatal=False)
+
+        initial_data_season = try_get(initial_data, lambda x: [y for y in x['initialState']['series']['seasons'] if y['seasonNumber'] == url_season_number][0])
+        initial_data_episode = try_get(initial_data_season, lambda x: [y for y in x['episodes'] if y['episodeNumber'] == url_episode_number][0])
+
+        info = {
+            'series': try_get(initial_data, lambda x: x['initialState']['series']['titles']['title']),
+
+            'season': try_get(initial_data_season, lambda x: x['titles']['title']),
+            'season_number': url_season_number,
+
+            'episode': self._clean_episode_title(try_get(initial_data_episode, lambda x: x['titles']['title']), url_episode_number),
+            'episode_number': url_episode_number,
+
+            'age_limit': parse_age_limit(try_get(initial_data_episode, lambda x: x['legalAge']['body']['rating']['code'])),
+        }
+
+        info.update(self._search_json_ld(webpage, display_id, default={}))
+
         nrk_id = info.get('@id') or self._html_search_meta(
             'nrk:program-id', webpage, default=None) or self._search_regex(
             r'data-program-id=["\'](%s)' % NRKTVIE._EPISODE_RE, webpage,
@@ -506,7 +568,9 @@ class NRKTVEpisodeIE(InfoExtractor):
             'id': nrk_id,
             'url': 'nrk:%s' % nrk_id,
             'ie_key': NRKIE.ie_key(),
+            'title': self._clean_episode_title(info['title'], url_episode_number),
         })
+
         return info
 
 
