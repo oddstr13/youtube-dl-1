@@ -745,21 +745,39 @@ class NRKTVDirekteIE(NRKTVIE):
 
 
 class NRKPlaylistBaseIE(InfoExtractor):
+    _MAIN_ARTICLE_RE = r'<article[^>]*\brole *= *"main"[^>]*>(?P<article>.*?)</article>'
+
     def _extract_description(self, webpage):
         pass
+
+    def _extract_main_article(self, webpage):
+        # type: (str) -> str
+        res = re.search(self._MAIN_ARTICLE_RE, webpage, re.DOTALL)
+
+        if res is None:
+            return ""
+
+        return res.groupdict().get('article', '')
 
     def _real_extract(self, url):
         playlist_id = self._match_id(url)
 
         webpage = self._download_webpage(url, playlist_id)
 
+        article = self._extract_main_article(webpage)
         entries = [
             self.url_result('nrk:%s' % video_id, NRKIE.ie_key())
-            for video_id in re.findall(self._ITEM_RE, webpage)
+            for video_id in re.findall(self._ITEM_RE, article)
         ]
 
-        playlist_title = self. _extract_title(webpage)
-        playlist_description = self._extract_description(webpage)
+        if not entries:
+            entries = [
+                self.url_result('nrk:%s' % video_id, NRKIE.ie_key())
+                for video_id in re.findall(self._ITEM_RE, webpage)
+            ]
+
+        playlist_title = self._extract_title(webpage)
+        playlist_description = self._og_search_description(webpage)
 
         return self.playlist_result(
             entries, playlist_id, playlist_title, playlist_description)
